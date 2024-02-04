@@ -24,21 +24,113 @@ pub struct OnePathParameter<P>(pub P);
 #[doc(hidden)]
 pub struct ManyPathParameters<P>(pub P);
 
-trait HandlerFunction<State, PathParameters, FunctionParameters, FunctionReturn> {
+trait HandlerFunction<'r, State, PathParameters, FunctionParameters, FunctionReturn: 'r> {
     async fn call_handler_func<W: ResponseWriter>(
         &self,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error>;
+}
+
+impl<
+        'r,
+        State,
+        FunctionReturn: IntoFuture + 'r,
+        E1: FromRequest<'r, State>,
+        H: Fn(E1) -> FunctionReturn,
+    > HandlerFunction<'r, State, NoPathParameters, (E1,), FunctionReturn> for H
+where
+    FunctionReturn::Output: IntoResponse,
+{
+    #[allow(unused_variables)]
+    async fn call_handler_func<W: ResponseWriter>(
+        &self,
+        state: &State,
+        path_parameters: NoPathParameters,
+        request: Request<'r>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        (self)(match E1::from_request(state, &request).await {
+            Ok(value) => value,
+            Err(err) => return err.write_to(response_writer).await,
+        })
+        .await
+        .write_to(response_writer)
+        .await
+    }
+}
+
+impl<
+        'r,
+        State,
+        PathParameter,
+        FunctionReturn: IntoFuture + 'r,
+        E1: FromRequest<'r, State>,
+        H: Fn(PathParameter, E1) -> FunctionReturn,
+    > HandlerFunction<'r, State, OnePathParameter<PathParameter>, (E1,), FunctionReturn> for H
+where
+    FunctionReturn::Output: IntoResponse,
+{
+    #[allow(unused_variables)]
+    async fn call_handler_func<W: ResponseWriter>(
+        &self,
+        state: &State,
+        OnePathParameter(path_parameter): OnePathParameter<PathParameter>,
+        request: Request<'r>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        (self)(
+            path_parameter,
+            match E1::from_request(state, &request).await {
+                Ok(value) => value,
+                Err(err) => return err.write_to(response_writer).await,
+            },
+        )
+        .await
+        .write_to(response_writer)
+        .await
+    }
+}
+
+impl<
+        'r,
+        State,
+        PathParameters,
+        FunctionReturn: IntoFuture + 'r,
+        E1: FromRequest<'r, State>,
+        H: Fn(PathParameters, E1) -> FunctionReturn,
+    > HandlerFunction<'r, State, ManyPathParameters<PathParameters>, (E1,), FunctionReturn> for H
+where
+    FunctionReturn::Output: IntoResponse,
+{
+    #[allow(unused_variables)]
+    async fn call_handler_func<W: ResponseWriter>(
+        &self,
+        state: &State,
+        ManyPathParameters(path_parameters): ManyPathParameters<PathParameters>,
+        request: Request<'r>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        (self)(
+            path_parameters,
+            match E1::from_request(state, &request).await {
+                Ok(value) => value,
+                Err(err) => return err.write_to(response_writer).await,
+            },
+        )
+        .await
+        .write_to(response_writer)
+        .await
+    }
 }
 
 macro_rules! declare_handler_func {
     ($($($name:ident)*;)*) => {
         $(
-            impl<State, FunctionReturn: IntoFuture, $($name: FromRequest<State>,)* H: Fn($($name),*) -> FunctionReturn>
-                HandlerFunction<State, NoPathParameters, ($($name,)*), FunctionReturn> for H
+            impl<'r, State, FunctionReturn: IntoFuture + 'r, $($name: FromRequest<'r, State>,)* H: Fn($($name),*) -> FunctionReturn>
+                HandlerFunction<'r, State, NoPathParameters, ($($name,)*), FunctionReturn> for H
             where
                 FunctionReturn::Output: IntoResponse,
             {
@@ -47,7 +139,7 @@ macro_rules! declare_handler_func {
                     &self,
                     state: &State,
                     path_parameters: NoPathParameters,
-                    request: Request<'_>,
+                    request: Request<'r>,
                     response_writer: W,
                 ) -> Result<ResponseSent, W::Error> {
                     (self)($(match <$name>::from_request(state, &request).await {
@@ -60,8 +152,8 @@ macro_rules! declare_handler_func {
                 }
             }
 
-            impl<State, PathParameter, FunctionReturn: IntoFuture, $($name: FromRequest<State>,)* H: Fn(PathParameter, $($name),*) -> FunctionReturn>
-                HandlerFunction<State, OnePathParameter<PathParameter>, ($($name,)*), FunctionReturn> for H
+            impl<'r, State, PathParameter, FunctionReturn: IntoFuture + 'r, $($name: FromRequest<'r, State>,)* H: Fn(PathParameter, $($name),*) -> FunctionReturn>
+                HandlerFunction<'r, State, OnePathParameter<PathParameter>, ($($name,)*), FunctionReturn> for H
             where
                 FunctionReturn::Output: IntoResponse,
             {
@@ -70,7 +162,7 @@ macro_rules! declare_handler_func {
                     &self,
                     state: &State,
                     OnePathParameter(path_parameter): OnePathParameter<PathParameter>,
-                    request: Request<'_>,
+                    request: Request<'r>,
                     response_writer: W,
                 ) -> Result<ResponseSent, W::Error> {
                     (self)(
@@ -86,8 +178,8 @@ macro_rules! declare_handler_func {
                 }
             }
 
-            impl<State, PathParameters, FunctionReturn: IntoFuture, $($name: FromRequest<State>,)* H: Fn(PathParameters, $($name),*) -> FunctionReturn>
-                HandlerFunction<State, ManyPathParameters<PathParameters>, ($($name,)*), FunctionReturn> for H
+            impl<'r, State, PathParameters, FunctionReturn: IntoFuture + 'r, $($name: FromRequest<'r, State>,)* H: Fn(PathParameters, $($name),*) -> FunctionReturn>
+                HandlerFunction<'r, State, ManyPathParameters<PathParameters>, ($($name,)*), FunctionReturn> for H
             where
                 FunctionReturn::Output: IntoResponse,
             {
@@ -96,7 +188,7 @@ macro_rules! declare_handler_func {
                     &self,
                     state: &State,
                     ManyPathParameters(path_parameters): ManyPathParameters<PathParameters>,
-                    request: Request<'_>,
+                    request: Request<'r>,
                     response_writer: W,
                 ) -> Result<ResponseSent, W::Error> {
                     (self)(
@@ -117,7 +209,7 @@ macro_rules! declare_handler_func {
 
 declare_handler_func!(
     ;
-    E1;
+    // E1;
     E1 E2;
     E1 E2 E3;
     E1 E2 E3 E4;
@@ -136,12 +228,12 @@ declare_handler_func!(
 );
 
 /// Handles [Request]s, and writes the response to the provided [ResponseWriter].
-pub trait RequestHandler<State, PathParameters> {
+pub trait RequestHandler<'r, State, PathParameters> {
     async fn call_request_handler<W: ResponseWriter>(
         &self,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error>;
 }
@@ -163,17 +255,17 @@ impl<FunctionParameters, FunctionReturn, Handler>
     }
 }
 
-impl<State, PathParameters, FunctionParameters, FunctionReturn, H>
-    RequestHandler<State, PathParameters>
+impl<'r, State, PathParameters, FunctionParameters, FunctionReturn: 'r, H>
+    RequestHandler<'r, State, PathParameters>
     for RequestHandlerFunctionCaller<FunctionParameters, FunctionReturn, H>
 where
-    H: HandlerFunction<State, PathParameters, FunctionParameters, FunctionReturn>,
+    H: HandlerFunction<'r, State, PathParameters, FunctionParameters, FunctionReturn>,
 {
     async fn call_request_handler<W: ResponseWriter>(
         &self,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         self.handler
@@ -185,12 +277,12 @@ where
 /// [RequestHandler] for unsupported methods.
 pub struct MethodNotAllowed;
 
-impl<State, PathParameters> RequestHandler<State, PathParameters> for MethodNotAllowed {
+impl<'r, State, PathParameters> RequestHandler<'r, State, PathParameters> for MethodNotAllowed {
     async fn call_request_handler<W: ResponseWriter>(
         &self,
         _state: &State,
         _path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         (
@@ -254,12 +346,12 @@ mod head_method_util {
 }
 
 /// Routes a request based on its method.
-pub trait MethodHandler<State, PathParameters> {
+pub trait MethodHandler<'r, State, PathParameters> {
     async fn call_method_handler<W: ResponseWriter>(
         &self,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error>;
 }
@@ -273,20 +365,20 @@ pub struct MethodRouter<GET, POST> {
 }
 
 /// Route GET requests to the given handler.
-pub fn get<State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
+pub fn get<'r, State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
     handler: Handler,
-) -> MethodRouter<impl RequestHandler<State, PathParameters>, MethodNotAllowed>
+) -> MethodRouter<impl RequestHandler<'r, State, PathParameters>, MethodNotAllowed>
 where
     RequestHandlerFunctionCaller<FunctionParameters, FunctionReturn, Handler>:
-        RequestHandler<State, PathParameters>,
+        RequestHandler<'r, State, PathParameters>,
 {
     get_service(RequestHandlerFunctionCaller::new(handler))
 }
 
 /// Route GET requests to the given service.
-pub fn get_service<State, PathParameters>(
-    service: impl RequestHandler<State, PathParameters>,
-) -> MethodRouter<impl RequestHandler<State, PathParameters>, MethodNotAllowed> {
+pub fn get_service<'r, State, PathParameters>(
+    service: impl RequestHandler<'r, State, PathParameters>,
+) -> MethodRouter<impl RequestHandler<'r, State, PathParameters>, MethodNotAllowed> {
     MethodRouter {
         get: service,
         post: MethodNotAllowed,
@@ -294,20 +386,20 @@ pub fn get_service<State, PathParameters>(
 }
 
 /// Route POST requests to the given handler.
-pub fn post<State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
+pub fn post<'r, State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
     handler: Handler,
-) -> MethodRouter<MethodNotAllowed, impl RequestHandler<State, PathParameters>>
+) -> MethodRouter<MethodNotAllowed, impl RequestHandler<'r, State, PathParameters>>
 where
     RequestHandlerFunctionCaller<FunctionParameters, FunctionReturn, Handler>:
-        RequestHandler<State, PathParameters>,
+        RequestHandler<'r, State, PathParameters>,
 {
     post_service(RequestHandlerFunctionCaller::new(handler))
 }
 
 /// Route POST requests to the given service.
-pub fn post_service<State, PathParameters>(
-    service: impl RequestHandler<State, PathParameters>,
-) -> MethodRouter<MethodNotAllowed, impl RequestHandler<State, PathParameters>> {
+pub fn post_service<'r, State, PathParameters>(
+    service: impl RequestHandler<'r, State, PathParameters>,
+) -> MethodRouter<MethodNotAllowed, impl RequestHandler<'r, State, PathParameters>> {
     MethodRouter {
         get: MethodNotAllowed,
         post: service,
@@ -315,21 +407,21 @@ pub fn post_service<State, PathParameters>(
 }
 
 impl<POST> MethodRouter<MethodNotAllowed, POST> {
-    pub fn get<State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
+    pub fn get<'r, State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
         self,
         handler: Handler,
-    ) -> MethodRouter<impl RequestHandler<State, PathParameters>, POST>
+    ) -> MethodRouter<impl RequestHandler<'r, State, PathParameters>, POST>
     where
         RequestHandlerFunctionCaller<FunctionParameters, FunctionReturn, Handler>:
-            RequestHandler<State, PathParameters>,
+            RequestHandler<'r, State, PathParameters>,
     {
         self.get_service(RequestHandlerFunctionCaller::new(handler))
     }
 
-    pub fn get_service<State, PathParameters>(
+    pub fn get_service<'r, State, PathParameters>(
         self,
-        service: impl RequestHandler<State, PathParameters>,
-    ) -> MethodRouter<impl RequestHandler<State, PathParameters>, POST> {
+        service: impl RequestHandler<'r, State, PathParameters>,
+    ) -> MethodRouter<impl RequestHandler<'r, State, PathParameters>, POST> {
         let MethodRouter {
             get: MethodNotAllowed,
             post,
@@ -340,21 +432,21 @@ impl<POST> MethodRouter<MethodNotAllowed, POST> {
 }
 
 impl<GET> MethodRouter<GET, MethodNotAllowed> {
-    pub fn post<State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
+    pub fn post<'r, State, PathParameters, FunctionParameters, FunctionReturn, Handler>(
         self,
         handler: Handler,
-    ) -> MethodRouter<GET, impl RequestHandler<State, PathParameters>>
+    ) -> MethodRouter<GET, impl RequestHandler<'r, State, PathParameters>>
     where
         RequestHandlerFunctionCaller<FunctionParameters, FunctionReturn, Handler>:
-            RequestHandler<State, PathParameters>,
+            RequestHandler<'r, State, PathParameters>,
     {
         self.post_service(RequestHandlerFunctionCaller::new(handler))
     }
 
-    pub fn post_service<State, PathParameters>(
+    pub fn post_service<'r, State, PathParameters>(
         self,
-        service: impl RequestHandler<State, PathParameters>,
-    ) -> MethodRouter<GET, impl RequestHandler<State, PathParameters>> {
+        service: impl RequestHandler<'r, State, PathParameters>,
+    ) -> MethodRouter<GET, impl RequestHandler<'r, State, PathParameters>> {
         let MethodRouter {
             get,
             post: MethodNotAllowed,
@@ -365,30 +457,31 @@ impl<GET> MethodRouter<GET, MethodNotAllowed> {
 }
 
 impl<GET, POST> MethodRouter<GET, POST> {
-    pub fn layer<State, PathParameters, L: Layer<State, PathParameters>>(
+    pub fn layer<'r, State, PathParameters, L: Layer<'r,  State, PathParameters>>(
         self,
         layer: L,
-    ) -> impl MethodHandler<State, PathParameters>
+    ) -> impl MethodHandler<'r, State, PathParameters>
     where
-        GET: RequestHandler<L::NextState, L::NextPathParameters>,
-        POST: RequestHandler<L::NextState, L::NextPathParameters>,
+        GET: RequestHandler<'r, L::NextState, L::NextPathParameters> + 'r,
+        POST: RequestHandler<'r, L::NextState, L::NextPathParameters> + 'r,
     {
         layer::MethodRouterLayer { layer, inner: self }
     }
 }
 
 impl<
+        'r,
         State,
         PathParameters,
-        GET: RequestHandler<State, PathParameters>,
-        POST: RequestHandler<State, PathParameters>,
-    > MethodHandler<State, PathParameters> for MethodRouter<GET, POST>
+        GET: RequestHandler<'r, State, PathParameters>,
+        POST: RequestHandler<'r, State, PathParameters>,
+    > MethodHandler<'r, State, PathParameters> for MethodRouter<GET, POST>
 {
     async fn call_method_handler<W: ResponseWriter>(
         &self,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         match request.method() {
@@ -422,13 +515,13 @@ impl<
 }
 
 /// Routes a request based on its path.
-pub trait PathRouter<State = (), CurrentPathParameters = NoPathParameters> {
+pub trait PathRouter<'r, State = (), CurrentPathParameters = NoPathParameters> {
     async fn call_path_router<W: ResponseWriter>(
         &self,
         state: &State,
         current_path_parameters: CurrentPathParameters,
         path: Path<'_>,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error>;
 }
@@ -436,13 +529,13 @@ pub trait PathRouter<State = (), CurrentPathParameters = NoPathParameters> {
 /// [RequestHandler] for unhandled paths.
 pub struct NotFound;
 
-impl<State, CurrentPathParameters> PathRouter<State, CurrentPathParameters> for NotFound {
+impl<'r, State, CurrentPathParameters> PathRouter<'r, State, CurrentPathParameters> for NotFound {
     async fn call_path_router<W: ResponseWriter>(
         &self,
         _state: &State,
         _current_path_parameters: CurrentPathParameters,
         _path: Path<'_>,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         (
@@ -698,19 +791,20 @@ struct Route<PD, Handler, Fallback> {
 }
 
 impl<
+        'r,
         State,
         CurrentPathParameters,
         PD: PathDescription<CurrentPathParameters>,
-        Handler: MethodHandler<State, PD::Output>,
-        Fallback: PathRouter<State, CurrentPathParameters>,
-    > PathRouter<State, CurrentPathParameters> for Route<PD, Handler, Fallback>
+        Handler: MethodHandler<'r, State, PD::Output>,
+        Fallback: PathRouter<'r, State, CurrentPathParameters>,
+    > PathRouter<'r, State, CurrentPathParameters> for Route<PD, Handler, Fallback>
 {
     async fn call_path_router<W: ResponseWriter>(
         &self,
         state: &State,
         current_path_parameters: CurrentPathParameters,
         path: Path<'_>,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         match self.path_description.parse_and_call(
@@ -751,19 +845,20 @@ struct NestedService<PD, Service, Fallback> {
 }
 
 impl<
+        'r,
         State,
         CurrentPathParameters,
         PD: PathDescription<CurrentPathParameters>,
-        Service: PathRouter<State, PD::Output>,
-        Fallback: PathRouter<State, CurrentPathParameters>,
-    > PathRouter<State, CurrentPathParameters> for NestedService<PD, Service, Fallback>
+        Service: PathRouter<'r, State, PD::Output>,
+        Fallback: PathRouter<'r, State, CurrentPathParameters>,
+    > PathRouter<'r, State, CurrentPathParameters> for NestedService<PD, Service, Fallback>
 {
     async fn call_path_router<W: ResponseWriter>(
         &self,
         state: &State,
         current_path_parameters: CurrentPathParameters,
         path: Path<'_>,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         match self.path_description.parse_and_call(
@@ -818,14 +913,15 @@ impl<State, CurrentPathParameters> Default for Router<NotFound, State, CurrentPa
     }
 }
 
-impl<State, CurrentPathParameters, R: PathRouter<State, CurrentPathParameters>>
+impl<'r, State, CurrentPathParameters, R: PathRouter<'r, State, CurrentPathParameters>>
     Router<R, State, CurrentPathParameters>
 {
     pub fn route<PD: PathDescription<CurrentPathParameters>>(
         self,
         path_description: PD,
-        handler: impl MethodHandler<State, PD::Output>,
-    ) -> Router<impl PathRouter<State, CurrentPathParameters>, State, CurrentPathParameters> {
+        handler: impl MethodHandler<'r, State, PD::Output>,
+    ) -> Router<impl PathRouter<'r, State, CurrentPathParameters>, State, CurrentPathParameters>
+    {
         let Router {
             router: fallback,
             _data,
@@ -844,8 +940,9 @@ impl<State, CurrentPathParameters, R: PathRouter<State, CurrentPathParameters>>
     pub fn nest<PD: PathDescription<CurrentPathParameters>>(
         self,
         path_description: PD,
-        service: impl PathRouter<State, PD::Output>,
-    ) -> Router<impl PathRouter<State, CurrentPathParameters>, State, CurrentPathParameters> {
+        service: impl PathRouter<'r, State, PD::Output>,
+    ) -> Router<impl PathRouter<'r, State, CurrentPathParameters>, State, CurrentPathParameters>
+    {
         let Router {
             router: fallback,
             _data,
@@ -865,6 +962,7 @@ impl<State, CurrentPathParameters, R: PathRouter<State, CurrentPathParameters>>
         OuterState,
         OuterPathParameters,
         L: Layer<
+            'r,
             OuterState,
             OuterPathParameters,
             NextState = State,
@@ -873,7 +971,7 @@ impl<State, CurrentPathParameters, R: PathRouter<State, CurrentPathParameters>>
     >(
         self,
         layer: L,
-    ) -> Router<impl PathRouter<OuterState, OuterPathParameters>, OuterState, OuterPathParameters>
+    ) -> Router<impl PathRouter<'r, OuterState, OuterPathParameters>, OuterState, OuterPathParameters>
     {
         let Self {
             router: inner,

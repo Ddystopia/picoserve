@@ -12,10 +12,11 @@
 use crate::{request::Request, response::status, response::IntoResponse, ResponseSent};
 
 /// Types that can be created from requests.
-pub trait FromRequest<State>: Sized {
+pub trait FromRequest<'r, State>: Sized + 'r {
     type Rejection: IntoResponse;
 
-    async fn from_request(state: &State, request: &Request) -> Result<Self, Self::Rejection>;
+    async fn from_request(state: &State, request: &'_ Request<'r>)
+        -> Result<Self, Self::Rejection>;
 }
 
 /// Extractor that deserializes query strings into some type.
@@ -49,13 +50,14 @@ impl IntoResponse for QueryRejection {
     }
 }
 
-impl<State, T: serde::de::DeserializeOwned> FromRequest<State> for Query<T> {
+impl<'r, State, T: 'r + serde::de::DeserializeOwned> FromRequest<'r, State> for Query<T> {
     type Rejection = QueryRejection;
 
     async fn from_request(
         _state: &State,
-        request: &Request<'_>,
-    ) -> Result<Query<T>, QueryRejection> {
+        request: &'_ Request<'r>,
+    ) -> Result<Query<T>, QueryRejection>
+    {
         super::url_encoded::deserialize_form(request.query().unwrap_or_default())
             .map(Self)
             .map_err(|super::url_encoded::BadUrlEncodedForm| QueryRejection)
@@ -102,10 +104,14 @@ impl IntoResponse for FormRejection {
     }
 }
 
-impl<State, T: serde::de::DeserializeOwned> FromRequest<State> for Form<T> {
+impl<'r, State, T: 'r + serde::de::DeserializeOwned> FromRequest<'r, State> for Form<T> {
     type Rejection = FormRejection;
 
-    async fn from_request(_state: &State, request: &Request<'_>) -> Result<Form<T>, FormRejection> {
+    async fn from_request(
+        _state: &State,
+        request: &'_ Request<'r>,
+    ) -> Result<Form<T>, FormRejection>
+    {
         super::url_encoded::deserialize_form(crate::url_encoded::UrlEncodedString(
             core::str::from_utf8(request.body())
                 .map_err(|core::str::Utf8Error { .. }| FormRejection::BodyIsNotUtf8)?,
@@ -134,10 +140,10 @@ pub struct State<T>(
     pub T,
 );
 
-impl<S, T: FromRef<S>> FromRequest<S> for State<T> {
+impl<'r, S, T: 'r + FromRef<S>> FromRequest<'r, S> for State<T> {
     type Rejection = core::convert::Infallible;
 
-    async fn from_request(state: &S, _request: &Request<'_>) -> Result<Self, Self::Rejection> {
+    async fn from_request(state: &S, _request: &'_ Request<'r>) -> Result<Self, Self::Rejection> {
         Ok(State(T::from_ref(state)))
     }
 }

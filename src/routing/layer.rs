@@ -27,7 +27,7 @@ pub trait Next<State, PathParameters> {
 ///
 /// To modify the response, create a struct that implements [ResponseWriter] and wraps `response_writer`,
 /// and pass an instance of that struct to `next`
-pub trait Layer<State, PathParameters> {
+pub trait Layer<'r, State, PathParameters> {
     /// The state passed to the
     type NextState;
     type NextPathParameters;
@@ -40,18 +40,18 @@ pub trait Layer<State, PathParameters> {
         next: NextLayer,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error>;
 }
 
-struct NextMethodRouterLayer<'a, N> {
+struct NextMethodRouterLayer<'r, 'a, N> {
     next: &'a N,
-    request: Request<'a>,
+    request: Request<'r>,
 }
 
-impl<'a, State, PathParameters, N: MethodHandler<State, PathParameters>> Next<State, PathParameters>
-    for NextMethodRouterLayer<'a, N>
+impl<'r, 'a, State, PathParameters, N: MethodHandler<'r, State, PathParameters>>
+    Next<State, PathParameters> for NextMethodRouterLayer<'r, 'a, N>
 {
     async fn run<W: ResponseWriter>(
         self,
@@ -71,17 +71,18 @@ pub(crate) struct MethodRouterLayer<L, I> {
 }
 
 impl<
-        L: Layer<State, PathParameters>,
-        I: MethodHandler<L::NextState, L::NextPathParameters>,
+        'r,
+        L: Layer<'r, State, PathParameters>,
+        I: MethodHandler<'r, L::NextState, L::NextPathParameters>,
         State,
         PathParameters,
-    > MethodHandler<State, PathParameters> for MethodRouterLayer<L, I>
+    > MethodHandler<'r, State, PathParameters> for MethodRouterLayer<L, I>
 {
     async fn call_method_handler<W: ResponseWriter>(
         &self,
         state: &State,
         path_parameters: PathParameters,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         self.layer
@@ -99,14 +100,14 @@ impl<
     }
 }
 
-struct NextPathRouterLayer<'a, N> {
+struct NextPathRouterLayer<'r, 'a, N> {
     next: &'a N,
     path: Path<'a>,
-    request: Request<'a>,
+    request: Request<'r>,
 }
 
-impl<'a, State, CurrentPathParameters, N: PathRouter<State, CurrentPathParameters>>
-    Next<State, CurrentPathParameters> for NextPathRouterLayer<'a, N>
+impl<'a, 'r, State, CurrentPathParameters, N: PathRouter<'r, State, CurrentPathParameters>>
+    Next<State, CurrentPathParameters> for NextPathRouterLayer<'r, 'a, N>
 {
     async fn run<W: ResponseWriter>(
         self,
@@ -132,18 +133,19 @@ pub(crate) struct PathRouterLayer<L, I> {
 }
 
 impl<
-        L: Layer<State, CurrentPathParameters>,
-        I: PathRouter<L::NextState, L::NextPathParameters>,
+        'r,
+        L: Layer<'r, State, CurrentPathParameters>,
+        I: PathRouter<'r, L::NextState, L::NextPathParameters>,
         State,
         CurrentPathParameters,
-    > PathRouter<State, CurrentPathParameters> for PathRouterLayer<L, I>
+    > PathRouter<'r, State, CurrentPathParameters> for PathRouterLayer<L, I>
 {
     async fn call_path_router<W: ResponseWriter>(
         &self,
         state: &State,
         current_path_parameters: CurrentPathParameters,
         path: Path<'_>,
-        request: Request<'_>,
+        request: Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         self.layer

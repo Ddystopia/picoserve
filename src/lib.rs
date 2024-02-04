@@ -172,7 +172,7 @@ impl<R: embedded_io_async::Read> embedded_io_async::Read for MapReadErrorReader<
 async fn do_serve<
     State,
     T: Timer,
-    P: routing::PathRouter<State>,
+    P: for <'r> routing::PathRouter<'r, State>,
     R: io::Read,
     W: io::Write<Error = R::Error>,
 >(
@@ -252,7 +252,7 @@ async fn do_serve<
 #[cfg(feature = "tokio")]
 /// Serve incoming requests read from `reader`, route them to `app`, and write responses to `writer`. App has no state.
 pub async fn serve<
-    P: routing::PathRouter,
+    P: for<'a> routing::PathRouter<'a>,
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 >(
@@ -278,7 +278,7 @@ pub async fn serve<
 /// Serve incoming requests read from `reader`, route them to `app`, and write responses to `writer`. App has a state of `State`.
 pub async fn serve_with_state<
     State,
-    P: routing::PathRouter<State>,
+    P: for<'a> routing::PathRouter<'a, State>,
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 >(

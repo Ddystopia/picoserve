@@ -92,12 +92,12 @@ impl WebSocketUpgrade {
     }
 }
 
-impl<State> crate::extract::FromRequest<State> for WebSocketUpgrade {
+impl<'r, State> crate::extract::FromRequest<'r, State> for WebSocketUpgrade {
     type Rejection = WebSocketUpgradeRejection;
 
     async fn from_request(
         _state: &State,
-        request: &crate::request::Request<'_>,
+        request: &'_ crate::request::Request<'r>,
     ) -> Result<Self, Self::Rejection> {
         if !request.method().eq_ignore_ascii_case("get") {
             return Err(WebSocketUpgradeRejection::MethodNotGet);

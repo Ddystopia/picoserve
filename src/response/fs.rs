@@ -103,12 +103,12 @@ impl File {
     }
 }
 
-impl<State, PathParameters> crate::routing::RequestHandler<State, PathParameters> for File {
+impl<'r, State, PathParameters> crate::routing::RequestHandler<'r, State, PathParameters> for File {
     async fn call_request_handler<W: super::ResponseWriter>(
         &self,
         _state: &State,
         _path_parameters: PathParameters,
-        request: crate::request::Request<'_>,
+        request: crate::request::Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         if let Some(if_none_match) = request.headers().get("If-None-Match") {
@@ -198,13 +198,13 @@ impl Directory {
     }
 }
 
-impl<State, CurrentPathParameters> PathRouter<State, CurrentPathParameters> for Directory {
+impl<'r, State, CurrentPathParameters> PathRouter<'r, State, CurrentPathParameters> for Directory {
     async fn call_path_router<W: super::ResponseWriter>(
         &self,
         state: &State,
         current_path_parameters: CurrentPathParameters,
         path: Path<'_>,
-        request: crate::request::Request<'_>,
+        request: crate::request::Request<'r>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         if !request.method().eq_ignore_ascii_case("get") {
